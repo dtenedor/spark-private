@@ -1176,4 +1176,56 @@ class AnalysisSuite extends AnalysisTest with Matchers {
         false)
     }
   }
+
+  test("SPARK-38334: Implement support for DEFAULT values for columns in tables") {
+    // The default value expression is set at parsing time and then resolved normally.
+    // In these test cases, there are no changes to the LogicalPlan during each analysis step.
+    val addColsPlan =
+    AddColumns(
+      testRelation,
+      Seq(QualifiedColType(path = None,
+        colName = "b",
+        dataType = IntegerType,
+        nullable = true,
+        comment = None,
+        position = None,
+        default = Some("42"))))
+    checkAnalysis(addColsPlan, addColsPlan)
+
+    val replaceColsPlan =
+      ReplaceColumns(
+        testRelation,
+        Seq(QualifiedColType(path = None,
+          colName = "b",
+          dataType = IntegerType,
+          nullable = true,
+          comment = None,
+          position = None,
+          default = Some("42"))))
+    checkAnalysis(replaceColsPlan, replaceColsPlan)
+
+    val alterColsSetDefaultPlan =
+      AlterColumn(
+        testRelation,
+        column = ResolvedFieldName(Seq("a"), StructField("a", IntegerType)),
+        dataType = Some(IntegerType),
+        nullable = Some(true),
+        comment = None,
+        position = None,
+        setDefaultExpression = Some("42"),
+        dropDefaultExpression = None)
+    checkAnalysis(alterColsSetDefaultPlan, alterColsSetDefaultPlan)
+
+    val alterColsDropDefaultPlan =
+      AlterColumn(
+        testRelation,
+        column = ResolvedFieldName(Seq("a"), StructField("a", IntegerType)),
+        dataType = Some(IntegerType),
+        nullable = Some(true),
+        comment = None,
+        position = None,
+        setDefaultExpression = None,
+        dropDefaultExpression = Some(true))
+    checkAnalysis(alterColsDropDefaultPlan, alterColsDropDefaultPlan)
+  }
 }

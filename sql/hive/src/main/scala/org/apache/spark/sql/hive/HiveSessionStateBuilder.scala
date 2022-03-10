@@ -98,7 +98,7 @@ class HiveSessionStateBuilder(
         new DetermineTableStats(session) +:
         RelationConversions(catalog) +:
         PreprocessTableCreation(session) +:
-        PreprocessTableInsertion +:
+        PreprocessTableInsertion(session) +:
         DataSourceAnalysis +:
         HiveAnalysis +:
         ReplaceCharWithVarchar +:

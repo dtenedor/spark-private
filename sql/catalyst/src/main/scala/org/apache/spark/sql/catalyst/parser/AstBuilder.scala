@@ -3702,9 +3702,6 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
       ctx: QualifiedColTypeWithPositionContext): QualifiedColType = withOrigin(ctx) {
     val name = typedVisit[Seq[String]](ctx.name)
     val defaultExpr = Option(ctx.defaultExpression()).map(visitDefaultExpression)
-    if (defaultExpr.isDefined) {
-      throw QueryParsingErrors.defaultColumnNotImplementedYetError(ctx)
-    }
     QualifiedColType(
       path = if (name.length > 1) Some(UnresolvedFieldName(name.init)) else None,
       colName = name.last,
@@ -3712,7 +3709,8 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
       nullable = ctx.NULL == null,
       comment = Option(ctx.commentSpec()).map(visitCommentSpec),
       position = Option(ctx.colPosition).map( pos =>
-        UnresolvedFieldPosition(typedVisit[ColumnPosition](pos))))
+        UnresolvedFieldPosition(typedVisit[ColumnPosition](pos))),
+      default = defaultExpr)
   }
 
   /**
@@ -3793,14 +3791,19 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
     } else {
       None
     }
-    if (action.defaultExpression != null) {
-      throw QueryParsingErrors.defaultColumnNotImplementedYetError(ctx)
+    val setDefaultExpression = if (action.defaultExpression != null) {
+      Option(action.defaultExpression()).map(visitDefaultExpression)
+    } else {
+      None
     }
-    if (action.dropDefault != null) {
-      throw QueryParsingErrors.defaultColumnNotImplementedYetError(ctx)
+    val dropDefaultExpression = if (action.dropDefault != null) {
+      Option(true)
+    } else {
+      None
     }
 
-    assert(Seq(dataType, nullable, comment, position).count(_.nonEmpty) == 1)
+    assert(Seq(dataType, nullable, comment, position, setDefaultExpression, dropDefaultExpression)
+      .count(_.nonEmpty) == 1)
 
     AlterColumn(
       createUnresolvedTable(ctx.table, s"ALTER TABLE ... $verb COLUMN"),
@@ -3808,7 +3811,9 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
       dataType = dataType,
       nullable = nullable,
       comment = comment,
-      position = position)
+      position = position,
+      setDefaultExpression = setDefaultExpression,
+      dropDefaultExpression = dropDefaultExpression)
   }
 
   /**
@@ -3843,7 +3848,9 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
       nullable = None,
       comment = Option(ctx.colType().commentSpec()).map(visitCommentSpec),
       position = Option(ctx.colPosition).map(
-        pos => UnresolvedFieldPosition(typedVisit[ColumnPosition](pos))))
+        pos => UnresolvedFieldPosition(typedVisit[ColumnPosition](pos))),
+      setDefaultExpression = None,
+      dropDefaultExpression = None)
   }
 
   override def visitHiveReplaceColumns(
@@ -3870,7 +3877,10 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
         if (Option(colType.defaultExpression()).map(visitDefaultExpression).isDefined) {
           throw QueryParsingErrors.defaultColumnNotImplementedYetError(ctx)
         }
-        col
+        // Set the DEFAULT expression from the ALTER TABLE ... REPLACE COLUMNS command, if any.
+        val defaultExpr: Option[String] = Option(colType.defaultExpression())
+          .map(visitDefaultExpression)
+        col.copy(default = defaultExpr)
       }.toSeq
     )
   }

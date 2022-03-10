@@ -65,6 +65,15 @@ abstract class SessionCatalogSuite extends AnalysisTest with Eventually {
     }
   }
 
+  private def withBasicCatalogWithDefaultColumn(f: SessionCatalog => Unit): Unit = {
+    val catalog = newSessionCatalog(newBasicCatalogWithDefaultColumn())
+    try {
+      f(catalog)
+    } finally {
+      catalog.reset()
+    }
+  }
+
   private def withEmptyCatalog(f: SessionCatalog => Unit): Unit = {
     val catalog = new SessionCatalog(newEmptyCatalog())
     catalog.createDatabase(newDb("default"), ignoreIfExists = true)
@@ -261,6 +270,24 @@ abstract class SessionCatalogSuite extends AnalysisTest with Eventually {
       catalog.createTable(newTable("tbl3", "db2"), ignoreIfExists = false)
       assert(catalog.externalCatalog.listTables("db1").toSet == Set("tbl3"))
       assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2", "tbl3"))
+      // Create table without explicitly specifying database
+      catalog.setCurrentDatabase("db1")
+      catalog.createTable(newTable("tbl4"), ignoreIfExists = false)
+      assert(catalog.externalCatalog.listTables("db1").toSet == Set("tbl3", "tbl4"))
+      assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2", "tbl3"))
+    }
+  }
+
+  test("create table with default columns") {
+    withBasicCatalogWithDefaultColumn { catalog =>
+      assert(catalog.externalCatalog.listTables("db1").isEmpty)
+      assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2"))
+      catalog.createTable(newTableWithDefaultColumn("tbl3", Some("db1")), ignoreIfExists = false)
+      catalog.createTable(newTableWithDefaultColumn("tbl3", Some("db2")), ignoreIfExists = false)
+      assert(catalog.externalCatalog.listTables("db1").toSet == Set("tbl3"))
+      assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2", "tbl3"))
+      assert(catalog.externalCatalog.getTable("db2", "tbl3")
+        .schema.fields.last.metadata.getString("default") == "\"abc\"")
       // Create table without explicitly specifying database
       catalog.setCurrentDatabase("db1")
       catalog.createTable(newTable("tbl4"), ignoreIfExists = false)

@@ -846,6 +846,52 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
     }
   }
 
+  test("INSERT INTO statements with tables with default columns") {
+    // For each of these cases, the test table 't' has two columns:
+    // (1) name 'i' with boolean type and no default value
+    // (2) name 's' with long integer type and a default value of 42L.
+    withTable("t") {
+      // Positive tests:
+      // The default value parses correctly the the provided and expected types are equal.
+      sql("create or replace table t(i boolean, s bigint default 42L) using parquet")
+      sql("insert into t values(true, 2L)")
+      checkAnswer(sql("select s from t1 where i = true"), Seq(2L).map(i => Row(i)))
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t1 where i = false"), Seq(42L).map(i => Row(i)))
+      // The default value parses correctly and the provided value type is different but coercible.
+      sql("create or replace table t(i boolean, s bigint default 42) using parquet")
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t1 where i = false"), Seq(42L).map(i => Row(i)))
+      // There are three column types.
+      sql("create or replace table t(i boolean, s bigint default 42, t bigint default 43) " +
+        "using parquet")
+      sql("insert into t values(false)")
+      sql("insert into t values(false, 44)")
+      checkAnswer(sql("select s from t1"), Seq(Row(42L, 43L), Row(44L, 43L)).map(i => Row(i)))
+
+      // Negative tests:
+      // The default value fails to parse.
+      sql("create or replace table t(i boolean, s bigint default unparseable) using parquet")
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t where i = false"), Seq(42L).map(i => Row(i)))
+      // The default value parses but refers to a table from the catalog.
+      sql("create or replace table other(x string) using parquet")
+      sql("create or replace table t(i boolean, s bigint default (select min(x) from other)) " +
+        "using parquet")
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t where i = false"), Seq("abc").map(i => Row(i)))
+      // The default value parses but the type is not coercible.
+      sql("create or replace table t(i boolean, s bigint default \"abc\") using parquet")
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t where i = false"), Seq("abc").map(i => Row(i)))
+      // The default value parses but analysis is not successful.
+      sql("create or replace table t(i boolean, s bigint default (select min(x) from badtable) " +
+        "using parquet")
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t where i = false"), Seq("abc").map(i => Row(i)))
+    }
+  }
+
   test("Stop task set if FileAlreadyExistsException was thrown") {
     Seq(true, false).foreach { fastFail =>
       withSQLConf("fs.file.impl" -> classOf[FileExistingTestFileSystem].getName,

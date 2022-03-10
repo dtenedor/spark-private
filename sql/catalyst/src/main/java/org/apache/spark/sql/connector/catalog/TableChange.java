@@ -219,6 +219,36 @@ public interface TableChange {
   }
 
   /**
+   * Create a TableChange for updating the SET DEFAULT expression of an ALTER TABLE command.
+   * <p>
+   * The name is used to find the field to update.
+   * <p>
+   * If the field does not exist, the change will result in an {@link IllegalArgumentException}.
+   *
+   * @param fieldNames field names of the column to update
+   * @param expression the new default expression
+   * @return a TableChange for the update
+   */
+  static TableChange updateSetDefaultExpression(String[] fieldNames, String expression) {
+    return new UpdateSetDefaultExpression(fieldNames, expression);
+  }
+
+  /**
+   * Create a TableChange for updating the DROP DEFAULT expression of an ALTER TABLE command.
+   * <p>
+   * The name is used to find the field to update.
+   * <p>
+   * If the field does not exist, the change will result in an {@link IllegalArgumentException}.
+   *
+   * @param fieldNames field names of the column to update
+   * @param expression the new default expression
+   * @return a TableChange for the update
+   */
+  static TableChange updateDropDefaultExpression(String[] fieldNames, boolean drop) {
+    return new UpdateDropDefaultExpression(fieldNames, drop);
+  }
+
+  /**
    * Create a TableChange for deleting a field.
    * <p>
    * If the field does not exist, the change will result in an {@link IllegalArgumentException}.
@@ -639,6 +669,84 @@ public interface TableChange {
     @Override
     public int hashCode() {
       int result = Objects.hash(position);
+      result = 31 * result + Arrays.hashCode(fieldNames);
+      return result;
+    }
+  }
+
+  /**
+   * A TableChange to update the SET DEFAULT expression for ALTER TABLE ... ALTER COLUMNS command.
+   * <p>
+   * The field names are used to find the field to update.
+   * <p>
+   * If the field does not exist, the change must result in an {@link IllegalArgumentException}.
+   */
+  final class UpdateSetDefaultExpression implements ColumnChange {
+    private final String[] fieldNames;
+    private final String expression;
+
+    private UpdateSetDefaultExpression(String[] fieldNames, String expression) {
+      this.fieldNames = fieldNames;
+      this.expression = expression;
+    }
+
+    @Override
+    public String[] fieldNames() {
+      return fieldNames;
+    }
+
+    public String defaultExpression() { return expression; }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+      UpdateSetDefaultExpression that = (UpdateSetDefaultExpression) o;
+      return Arrays.equals(fieldNames, that.fieldNames) && expression.equals(that.expression);
+    }
+
+    @Override
+    public int hashCode() {
+      int result = Objects.hash(expression);
+      result = 31 * result + Arrays.hashCode(fieldNames);
+      return result;
+    }
+  }
+
+  /**
+   * A TableChange to update the presence of DROP DEFAULT for ALTER TABLE ... ALTER COLUMNS command.
+   * <p>
+   * The field names are used to find the field to update.
+   * <p>
+   * If the field does not exist, the change must result in an {@link IllegalArgumentException}.
+   */
+  final class UpdateDropDefaultExpression implements ColumnChange {
+    private final String[] fieldNames;
+    private final boolean drop;
+
+    private UpdateDropDefaultExpression(String[] fieldNames, boolean drop) {
+      this.fieldNames = fieldNames;
+      this.drop = drop;
+    }
+
+    @Override
+    public String[] fieldNames() {
+      return fieldNames;
+    }
+
+    public boolean drop() { return drop; }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+      UpdateDropDefaultExpression that = (UpdateDropDefaultExpression) o;
+      return Arrays.equals(fieldNames, that.fieldNames) && drop == that.drop;
+    }
+
+    @Override
+    public int hashCode() {
+      int result = Objects.hash(drop);
       result = 31 * result + Arrays.hashCode(fieldNames);
       return result;
     }
