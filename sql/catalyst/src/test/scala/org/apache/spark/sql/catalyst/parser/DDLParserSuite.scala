@@ -931,6 +931,8 @@ class DDLParserSuite extends AnalysisTest {
         Some(LongType),
         None,
         None,
+        None,
+        None,
         None))
   }
 
@@ -950,6 +952,8 @@ class DDLParserSuite extends AnalysisTest {
         Some(LongType),
         None,
         None,
+        None,
+        None,
         None))
   }
 
@@ -962,6 +966,8 @@ class DDLParserSuite extends AnalysisTest {
         None,
         None,
         Some("new comment"),
+        None,
+        None,
         None))
   }
 
@@ -974,7 +980,9 @@ class DDLParserSuite extends AnalysisTest {
         None,
         None,
         None,
-        Some(UnresolvedFieldPosition(first()))))
+        Some(UnresolvedFieldPosition(first())),
+        None,
+        None))
   }
 
   test("alter table: multiple property changes are not allowed") {
@@ -1000,6 +1008,8 @@ class DDLParserSuite extends AnalysisTest {
         None,
         Some(false),
         None,
+        None,
+        None,
         None))
 
     comparePlans(
@@ -1009,6 +1019,8 @@ class DDLParserSuite extends AnalysisTest {
         UnresolvedFieldName(Seq("a", "b", "c")),
         None,
         Some(true),
+        None,
+        None,
         None,
         None))
   }
@@ -1047,6 +1059,8 @@ class DDLParserSuite extends AnalysisTest {
         Some(IntegerType),
         None,
         None,
+        None,
+        None,
         None))
 
     comparePlans(
@@ -1057,6 +1071,8 @@ class DDLParserSuite extends AnalysisTest {
         Some(IntegerType),
         None,
         Some("new_comment"),
+        None,
+        None,
         None))
 
     comparePlans(
@@ -1067,7 +1083,9 @@ class DDLParserSuite extends AnalysisTest {
         Some(IntegerType),
         None,
         None,
-        Some(UnresolvedFieldPosition(after("other_col")))))
+        Some(UnresolvedFieldPosition(after("other_col"))),
+        None,
+        None))
 
     // renaming column not supported in hive style ALTER COLUMN.
     intercept("ALTER TABLE table_name CHANGE COLUMN a.b.c new_name INT",

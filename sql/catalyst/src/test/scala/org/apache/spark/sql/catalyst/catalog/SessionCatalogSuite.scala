@@ -66,7 +66,7 @@ abstract class SessionCatalogSuite extends AnalysisTest with Eventually {
   }
 
   private def withBasicCatalogWithDefaultColumn(f: SessionCatalog => Unit): Unit = {
-    val catalog = SessionCatalog(newBasicCatalogWithDefaultColumn())
+    val catalog = new SessionCatalog(newBasicCatalogWithDefaultColumn())
     try {
       f(catalog)
     } finally {
