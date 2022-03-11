@@ -450,12 +450,12 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
         }
     }
     // First check for unresolved relation references or subquery outer references in 'colExprs'.
-    colExprs.zip(colNames).foreach {
-      case (colExpr, colName)
-        if colExpr.containsAnyPattern(UNRESOLVED_RELATION, OUTER_REFERENCE, UNRESOLVED_WITH) =>
+    colExprs.zip(colNames).foreach { pair =>
+      if (pair._1.containsAnyPattern(UNRESOLVED_RELATION, OUTER_REFERENCE, UNRESOLVED_WITH)) {
         throw new AnalysisException(
           errorPrefix + s"${colName} has an DEFAULT value that is invalid because only simple " +
             s"expressions are allowed: $colExpr")
+      }
     }
     // Perform implicit coercion from the provided expression type to required DEFAULT column type.
     val colExprsCoerced: Seq[Expression] = (colExprs, colTypes, colNames).zipped.toList.map {
@@ -471,7 +471,7 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
     }
     // Now invoke a simple analyzer to resolve any attribute references in each expression and add
     // an alias over each one.
-    val newAliases = (colExprsCoerced, colTexts, colNames).zipped.toList.map {
+    val newAliases = (colExprsCoerced, colTexts, colNames).zipped.map {
       case (colExpr, colText, colName) =>
         try {
           val analyzer = new Analyzer(
