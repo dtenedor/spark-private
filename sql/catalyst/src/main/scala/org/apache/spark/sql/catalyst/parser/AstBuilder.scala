@@ -2784,13 +2784,13 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
     Option(commentSpec()).map(visitCommentSpec).foreach {
       builder.putString("comment", _)
     }
-
     // Process the 'DEFAULT expression' clause in the column definition, if any.
-    val name: String = colName.getText
-    val defaultExpr = Option(ctx.defaultExpression()).map(visitDefaultExpression)
-    if (defaultExpr.isDefined) {
-      throw QueryParsingErrors.defaultColumnNotImplementedYetError(ctx)
+    val defaultExpr = Option(ctx.defaultExpression()).map(visitDefaultExpression).foreach {
+      // Add default to metadata
+      builder.putString("default", _)
     }
+
+    val name: String = colName.getText
 
     StructField(
       name = name,
@@ -3890,9 +3890,6 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
         if (col.path.isDefined) {
           throw QueryParsingErrors.operationInHiveStyleCommandUnsupportedError(
             "Replacing with a nested column", "REPLACE COLUMNS", ctx)
-        }
-        if (Option(colType.defaultExpression()).map(visitDefaultExpression).isDefined) {
-          throw QueryParsingErrors.defaultColumnNotImplementedYetError(ctx)
         }
         // Set the DEFAULT expression from the ALTER TABLE ... REPLACE COLUMNS command, if any.
         val defaultExpr: Option[String] = Option(colType.defaultExpression())

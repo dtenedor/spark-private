@@ -1352,7 +1352,7 @@ class Analyzer(override val catalogManager: CatalogManager)
    * (NULL, 1, 5)
    * (1, 2, 5)
    */
-  class ResolveDefaultColumnReferences extends Rule[LogicalPlan] {
+  object ResolveDefaultColumnReferences extends Rule[LogicalPlan] {
     def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsUpWithPruning(
       _.containsPattern(UNRESOLVED_ATTRIBUTE)) {
       case h: InsertIntoStatement =>
