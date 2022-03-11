@@ -433,9 +433,9 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
   private def AddProjectionForDefaultColumnValues(insert: InsertIntoStatement): LogicalPlan = {
     val colIndexes = insert.query.output.size until insert.table.output.size
     val columns = colIndexes.map(insert.table.schema.fields(_))
-    val colNames: Seq[String] = colIndexes.map(columns(_).name)
-    val colTypes: Seq[DataType] = colIndexes.map(columns(_).dataType)
-    val colTexts: Seq[String] = colIndexes.map(columns(_).metadata.getString("default"))
+    val colNames: Seq[String] = columns.map(_.name)
+    val colTypes: Seq[DataType] = columns.map(_.dataType)
+    val colTexts: Seq[String] = columns.map(_.metadata.getString("default"))
     // Parse the DEFAULT column expression. If the parsing fails, throw an error to the user.
     val errorPrefix = "Failed to execute INSERT command because the destination table column "
     val colExprs: Seq[Expression] = colNames.zip(colTexts).map {
