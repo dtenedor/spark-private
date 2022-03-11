@@ -37,8 +37,6 @@ import org.apache.spark.sql.types.{AtomicType, DataType, StructType}
 import org.apache.spark.sql.util.PartitioningUtils.normalizePartitionSpec
 import org.apache.spark.sql.util.SchemaUtils
 
-import java.io
-
 /**
  * Replaces [[UnresolvedRelation]]s if the plan is for direct query on files.
  */
@@ -453,7 +451,9 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
     }
     // First check for unresolved relation references or subquery outer references in 'colExprs'.
     if (colExprs.zip(colNames).exists {
-      case (colExpr, colName) => colExpr.containsPattern(UNRESOLVED_RELATION, OUTER_REFERENCE) }) {
+      case (colExpr, colName) => colExpr.containsAnyPattern(UNRESOLVED_RELATION, OUTER_REFERENCE,
+        UNRESOLVED_HINT, UNRESOLVED_WITH)
+    }) {
       throw new AnalysisException(
         errorPrefix + s"${colName} has an DEFAULT value that is invalid because only simple " +
           s"expressions are allowed: $colExpr")
@@ -475,9 +475,10 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
     val newAliases = (colExprsCoerced, colTexts, colNames).zipped.toList.map {
       case (colExpr, colText, colName) =>
         try {
-          val analyzed =
-            SimpleAnalyzer.execute(Project(Seq(Alias(colExpr, colName)()), OneRowRelation()))
-          SimpleAnalyzer.checkAnalysis(analyzed)
+          val analyzer = new Analyzer(
+            new SessionCatalog(new InMemoryCatalog, FunctionRegistry.builtin))
+          val analyzed = analyzer.execute(Project(Seq(Alias(colExpr, colName)()), OneRowRelation()))
+          analyzer.checkAnalysis(analyzed)
           analyzed match {
             case Project(Seq(a@_), OneRowRelation()) => a.asInstanceOf[Alias]
           }

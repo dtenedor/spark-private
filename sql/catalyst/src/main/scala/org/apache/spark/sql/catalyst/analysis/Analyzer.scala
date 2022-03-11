@@ -286,6 +286,7 @@ class Analyzer(override val catalogManager: CatalogManager)
       ResolveFieldNameAndPosition ::
       AddMetadataColumns ::
       DeduplicateRelations ::
+      ResolveDefaultColumnReferences ::
       ResolveReferences ::
       ResolveExpressionsWithNamePlaceholders ::
       ResolveDeserializer ::
@@ -1333,6 +1334,29 @@ class Analyzer(override val catalogManager: CatalogManager)
           }
         }.reduce(And)
       }
+    }
+  }
+
+  /**
+   * Replaces unresolved "DEFAULT" column references with matching default column values.
+   *
+   * Background: CREATE TABLE and ALTER TABLE invocations support setting column default values for
+   * later operations. Following INSERT, and INSERT MERGE commands may then reference the value
+   * using the DEFAULT keyword as needed.
+   *
+   * Example:
+   * CREATE TABLE T(a INT, b INT NOT NULL DEFAULT 5);
+   * INSERT INTO T VALUES (1, 2, DEFAULT);
+   * SELECT * FROM T;
+   * (NULL, 0, 5)
+   * (NULL, 1, 5)
+   * (1, 2, 5)
+   */
+  class ResolveDefaultColumnReferences extends Rule[LogicalPlan] {
+    def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsUpWithPruning(
+      _.containsPattern(UNRESOLVED_ATTRIBUTE)) {
+      case h: InsertIntoStatement =>
+        h
     }
   }
 
