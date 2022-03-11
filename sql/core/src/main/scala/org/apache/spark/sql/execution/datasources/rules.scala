@@ -453,12 +453,12 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
     colExprs.zip(colNames).foreach { pair =>
       if (pair._1.containsAnyPattern(UNRESOLVED_RELATION, OUTER_REFERENCE, UNRESOLVED_WITH)) {
         throw new AnalysisException(
-          errorPrefix + s"${colName} has an DEFAULT value that is invalid because only simple " +
-            s"expressions are allowed: $colExpr")
+          errorPrefix + s"${pair._1} has an DEFAULT value that is invalid because only simple " +
+            s"expressions are allowed: ${pair._2}")
       }
     }
     // Perform implicit coercion from the provided expression type to required DEFAULT column type.
-    val colExprsCoerced: Seq[Expression] = (colExprs, colTypes, colNames).zipped.toList.map {
+    val colExprsCoerced: Seq[Expression] = (colExprs, colTypes, colNames).zipped.map {
       case (colExpr, colType, _)
         if colType != colExpr.dataType && Cast.canUpCast(colExpr.dataType, colType) =>
         Cast(colExpr, colType)

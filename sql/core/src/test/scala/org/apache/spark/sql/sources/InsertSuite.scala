@@ -869,10 +869,10 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
     }
     // There are three column types.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default 42, t bigint default 43) using parquet")
+      sql("create table t(i boolean, s bigint default 42, x bigint default 43) using parquet")
       sql("insert into t values(false)")
       sql("insert into t values(false, 44)")
-      checkAnswer(sql("select s from t"), Seq(Row(42L, 43L), Row(44L, 43L)).map(i => Row(i)))
+      checkAnswer(sql("select s, x from t"), Seq(Row(42L, 43L), Row(44L, 43L)).map(i => Row(i)))
     }
 
     // Negative tests:
