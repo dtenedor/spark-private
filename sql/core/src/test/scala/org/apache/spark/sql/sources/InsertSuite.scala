@@ -868,6 +868,24 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
       sql("insert into t values(false)")
       checkAnswer(sql("select s from t where i = false"), Seq(42L).map(i => Row(i)))
     }
+    // The default value parses correctly as a constant but non-literal expression.
+    withTable("t") {
+      sql("create table t(i boolean, s bigint default 41 + 1) using parquet")
+      sql("insert into t values(false)")
+      checkAnswer(sql("select s from t where i = false"), Seq(42L).map(i => Row(i)))
+    }
+    // There is an explicit default value provided in the INSERT INTO statement as an inline table.
+    withTable("t") {
+      sql("create table t(i boolean, s bigint default 42) using parquet")
+      sql("insert into t values(false, default)")
+      checkAnswer(sql("select s from t where i = false"), Seq(42L).map(i => Row(i)))
+    }
+    // There is an explicit default value provided in the INSERT INTO statement as a SELECT.
+    withTable("t") {
+      sql("create table t(i boolean, s bigint default 42) using parquet")
+      sql("insert into t select false, default")
+      checkAnswer(sql("select s from t where i = false"), Seq(42L).map(i => Row(i)))
+    }
     // There are three column types.
     withTable("t") {
       sql("create table t(i boolean, s bigint default 42, x bigint default 43) using parquet")
@@ -902,6 +920,13 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
         sql("create table t(i boolean, s bigint default (select min(x) from other)) using parquet")
       }.getMessage.contains("DEFAULT value which fails to analyze"))
     }
+    // Explicit default values may not participate in complex expressions.
+    withTable("t") {
+      sql("create table t(i boolean, s bigint default 42) using parquet")
+      assert(intercept[AnalysisException] {
+        sql("insert into t values(false, default + 1)")
+      }.getMessage.contains("not found"))
+    }
     // The default value parses but the type is not coercible.
     withTable("t") {
       sql("create table t(i boolean, s bigint default false) using parquet")
@@ -909,7 +934,7 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
         sql("insert into t values (true)")
       }.getMessage.contains("provided a value of incompatible type"))
     }
-  }
+}
 
   test("Stop task set if FileAlreadyExistsException was thrown") {
     Seq(true, false).foreach { fastFail =>
