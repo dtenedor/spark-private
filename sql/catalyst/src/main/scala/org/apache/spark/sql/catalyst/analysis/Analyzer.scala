@@ -286,8 +286,6 @@ class Analyzer(override val catalogManager: CatalogManager)
       ResolveFieldNameAndPosition ::
       AddMetadataColumns ::
       DeduplicateRelations ::
-      ConstantFoldDefaultExpressions(catalogManager) ::
-      ResolveDefaultColumnReferences(catalogManager) ::
       ResolveReferences ::
       ResolveExpressionsWithNamePlaceholders ::
       ResolveDeserializer ::
@@ -1220,8 +1218,11 @@ class Analyzer(override val catalogManager: CatalogManager)
   object ResolveInsertInto extends Rule[LogicalPlan] {
     override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsWithPruning(
       AlwaysProcess.fn, ruleId) {
-      case i @ InsertIntoStatement(r: DataSourceV2Relation, _, _, _, _, _)
-          if i.query.resolved && i.userSpecifiedCols.isEmpty =>
+      case originalInsert @ InsertIntoStatement(r: DataSourceV2Relation, _, _, _, _, _)
+          if originalInsert.query.resolved && originalInsert.userSpecifiedCols.isEmpty =>
+        // Resolve DEFAULT column references in the INSERT INTO statement.
+        val i = ResolveDefaultColumnReferences(catalogManager)(originalInsert)
+
         // ifPartitionNotExists is append with validation, but validation is not supported
         if (i.ifPartitionNotExists) {
           throw QueryCompilationErrors.unsupportedIfNotExistsError(r.table.name)
