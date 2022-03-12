@@ -895,7 +895,6 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
           "using parquet")
       }.getMessage.contains("DEFAULT value which fails to analyze"))
     }
-
     // The default value parses but refers to a table from the catalog.
     withTable("t", "other") {
       sql("create table other(x string) using parquet")
@@ -903,12 +902,11 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
         sql("create table t(i boolean, s bigint default (select min(x) from other)) using parquet")
       }.getMessage.contains("DEFAULT value which fails to analyze"))
     }
-
     // The default value parses but the type is not coercible.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default 42) using parquet")
+      sql("create table t(i boolean, s bigint default false) using parquet")
       assert(intercept[AnalysisException] {
-        sql("insert into t values (true, false)")
+        sql("insert into t values (true)")
       }.getMessage.contains("provided a value of incompatible type"))
     }
   }
