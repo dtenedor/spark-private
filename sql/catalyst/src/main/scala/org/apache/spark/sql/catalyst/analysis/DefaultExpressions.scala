@@ -18,9 +18,7 @@
 package org.apache.spark.sql.catalyst.analysis
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst._
 import org.apache.spark.sql.catalyst.catalog._
-import org.apache.spark.sql.catalyst.encoders.OuterScopes
 import org.apache.spark.sql.catalyst.expressions.{Expression, _}
 import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
 import org.apache.spark.sql.catalyst.parser.{CatalystSqlParser, ParseException}
@@ -32,43 +30,45 @@ import org.apache.spark.sql.types._
 
 /**
  * Finds DEFAULT expressions in CREATE/REPLACE TABLE commands and constant-folds then.
+ *
+ * Example:
+ * CREATE TABLE T(a INT, b INT DEFAULT 5 + 5) becomes
+ * CREATE TABLE T(a INT, b INT DEFAULT 10
  */
-case class ConstantFoldDefaultExpressions(catalogManager: CatalogManager)
-  extends Rule[LogicalPlan] {
+case class ConstantFoldDefaultExpressions(catalogManager: CatalogManager) {
   val default = "default"
   lazy val parser = new CatalystSqlParser()
   lazy val analyzer = new Analyzer(catalogManager)
 
-  def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsUp {
-    case c: CreateTable =>
-      // Get the list of column indexes in the CREATE TABLE command with DEFAULT values.
-      val (fields: Array[StructField], indexes: Array[Int]) =
-        c.tableSchema.fields.zipWithIndex.filter {
-          case (f, i) => f.metadata.contains(default)
-        }.unzip
-      // Extract the list of DEFAULT column values from the CreateTable command.
-      val defaults: Seq[String] = fields.map {
-        _.metadata.getString(default)
+  def apply(c: CreateTable): CreateTable = {
+    // Get the list of column indexes in the CREATE TABLE command with DEFAULT values.
+    val (fields: Array[StructField], indexes: Array[Int]) =
+      c.tableSchema.fields.zipWithIndex.filter {
+        case (f, i) => f.metadata.contains(default)
+      }.unzip
+    // Extract the list of DEFAULT column values from the CreateTable command.
+    val defaults: Seq[String] = fields.map {
+      _.metadata.getString(default)
+    }
+    // Extract the list of DEFAULT column values from the CreateTable command.
+    val exprs: Seq[Expression] = defaults.map {
+      parser.parseExpression(_)
+    }
+    // Analyze and constant-fold each parse result.
+    val analyzed: Seq[Expression] = exprs.map { e =>
+      val plan = analyzer.execute(Project(Seq(Alias(e, "alias")()), OneRowRelation()))
+      analyzer.checkAnalysis(plan)
+      val folded = ConstantFolding(plan)
+      folded match {
+        case Project(Seq(a: Alias), _) => a.child
       }
-      // Extract the list of DEFAULT column values from the CreateTable command.
-      val exprs: Seq[Expression] = defaults.map {
-        parser.parseExpression(_)
-      }
-      // Analyze and constant-fold each parse result.
-      val analyzed: Seq[Expression] = exprs.map { e =>
-        val plan = analyzer.execute(Project(Seq(Alias(e, "alias")()), OneRowRelation()))
-        analyzer.checkAnalysis(plan)
-        val folded = ConstantFolding(plan)
-        folded match {
-          case Project(Seq(a: Alias), _) => a.child
-        }
-      }
-      // Finally, replace the original struct fields with the new ones.
-      val indexMap: Map[Int, StructField] = indexes.zip(fields).toMap
-      val newFields: Seq[StructField] = c.tableSchema.fields.zipWithIndex.map {
-        case (f, i) => indexMap.getOrElse(i, f)
-      }
-      c.copy(tableSchema = StructType(newFields))
+    }
+    // Finally, replace the original struct fields with the new ones.
+    val indexMap: Map[Int, StructField] = indexes.zip(fields).toMap
+    val newFields: Seq[StructField] = c.tableSchema.fields.zipWithIndex.map {
+      case (f, i) => indexMap.getOrElse(i, f)
+    }
+    c.copy(tableSchema = StructType(newFields))
   }
 }
 
@@ -87,16 +87,12 @@ case class ConstantFoldDefaultExpressions(catalogManager: CatalogManager)
  * (NULL, 1, 5)
  * (1, 2, 5)
  */
-case class ResolveDefaultColumnReferences(catalogManager: CatalogManager)
-  extends Rule[LogicalPlan] {
+case class ResolveDefaultColumnReferences(catalogManager: CatalogManager) {
   val default = "default"
   lazy val parser = new CatalystSqlParser()
 
-  def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
-    _.containsPattern(UNRESOLVED_ATTRIBUTE)) {
-    case i: InsertIntoStatement =>
-      ReplaceExplicitDefaultColumnValues(AddProjectionForMissingDefaultColumnValues(i))
-    case plan: LogicalPlan => plan
+  def apply(i: InsertIntoStatement): InsertIntoStatement = {
+    ReplaceExplicitDefaultColumnValues(AddProjectionForMissingDefaultColumnValues(i))
   }
 
   /**
@@ -108,7 +104,7 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager)
     val columns = colIndexes.map(insert.table.schema.fields(_))
     val colNames: Seq[String] = columns.map(_.name)
     val colTypes: Seq[DataType] = columns.map(_.dataType)
-    val colTexts: Seq[String] = columns.map(_.metadata.getString("default"))
+    val colTexts: Seq[String] = columns.map(_.metadata.getString(default))
     // Parse the DEFAULT column expression. If the parsing fails, throw an error to the user.
     val errorPrefix = "Failed to execute INSERT command because the destination table column "
     val analysisPrefix = " has a DEFAULT value which fails to analyze: "
@@ -191,9 +187,12 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager)
       case table: UnresolvedInlineTable =>
         val rows: Seq[Seq[Expression]] = table.rows.map { row =>
           defaults.zip(row).map {
-            case (default, rowExpr) =>
-              if (default.isDefined) {
-                ReplaceDefaultReferencesInExpression(default.get)(rowExpr)
+            case (defaultExpr, rowExpr) =>
+              if (defaultExpr.isDefined) {
+                rowExpr match {
+                  case u: UnresolvedAttribute if u.name.equalsIgnoreCase(default) => u
+                  case _ => rowExpr
+                }
               } else {
                 rowExpr
               }
@@ -202,21 +201,14 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager)
         table.copy(rows = rows)
       case project: Project =>
         val updated: Seq[NamedExpression] = project.projectList.map {
-          ReplaceDefaultReferencesInExpression(_).asInstanceOf[NamedExpression]
+          expr => expr match {
+            case u: UnresolvedAttribute if u.name.equalsIgnoreCase(default) => u
+            case _ => expr
+          }
         }
         project.copy(projectList = updated)
-      case _: LogicalPlan => _
+      case _ => insert.query
     }
     insert.copy(query = newQuery)
   }
-}
-
-// This is a helper rule to replace each unresolved "DEFAULT" reference to the corresponding
-// value provided earlier.
-case class ReplaceDefaultReferencesInExpression(result: Expression) extends Rule[Expression] {
-  def apply(expr: Expression): Expression =
-    expr.transformWithPruning(_.containsPattern(UNRESOLVED_ATTRIBUTE)) {
-      case u: UnresolvedAttribute if u.name.equalsIgnoreCase("default") => result
-      case e: Expression => e
-    }
 }
