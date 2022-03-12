@@ -54,18 +54,20 @@ case class DefaultColumns(catalogManager: CatalogManager) {
     val colNames: Seq[String] = fields.map { _.name }
     val defaults: Seq[String] = fields.map { _.metadata.getString(default) }
     // Extract the list of DEFAULT column values from the CreateTable command.
-    val exprs: Seq[Expression] = colNames.zip(defaults).map { Parse }
+    val exprs: Seq[Expression] = colNames.zip(defaults).map {
+      case (name, text) => Parse(name, text)
+    }
     // Analyze and constant-fold each parse result.
-    val analyzed: Seq[Expression] = exprs.map { e =>
-      val plan = analyzer.execute(Project(Seq(Alias(e, "alias")()), OneRowRelation()))
-      analyzer.checkAnalysis(plan)
-      val folded = ConstantFolding(plan)
-      folded match {
-        case Project(Seq(a: Alias), _) => a.child
-      }
+    val analyzed: Seq[Expression] = (exprs, defaults, colNames).zipped.map {
+      case (expr, default, name) => Analyze(expr, default, name)
     }
     // Finally, replace the original struct fields with the new ones.
-    val indexMap: Map[Int, StructField] = indexes.zip(fields).toMap
+    val indexMap: Map[Int, StructField] = (indexes, fields, analyzed).zipped.map {
+      case (index, field, expr) =>
+        val newMetadata: Metadata = new MetadataBuilder().withMetadata(field.metadata)
+          .putString(default, expr.sql).build()
+        (index, field.copy(metadata = newMetadata))
+    }.toMap
     val newFields: Seq[StructField] = c.tableSchema.fields.zipWithIndex.map {
       case (f, i) => indexMap.getOrElse(i, f)
     }
@@ -90,10 +92,20 @@ case class DefaultColumns(catalogManager: CatalogManager) {
    */
   private def Analyze(colExpr: Expression, colText: String, colName: String): Expression = {
     try {
-      val analyzed = analyzer.execute(Project(Seq(Alias(colExpr, colName)()), OneRowRelation()))
-      analyzer.checkAnalysis(analyzed)
-      analyzed match {
+      // Invoke the analyzer over the 'colExpr'.
+      val plan = analyzer.execute(Project(Seq(Alias(colExpr, colName)()), OneRowRelation()))
+      analyzer.checkAnalysis(plan)
+      // Perform constant folding over the result.
+      val folded = ConstantFolding(plan)
+      val result = folded match {
         case Project(Seq(a: Alias), OneRowRelation()) => a.child
+      }
+      // Make sure the constant folding was successful.
+      result match {
+        case _: Literal => result
+        case _ =>
+          throw new AnalysisException( errorPrefix +
+              s"$colName has a DEFAULT value which is not a constant expression: $colText")
       }
     } catch {
       case ex: AnalysisException =>
@@ -136,18 +148,13 @@ case class DefaultColumns(catalogManager: CatalogManager) {
     val colTypes: Seq[DataType] = columns.map(_.dataType)
     val colTexts: Seq[String] = columns.map(_.metadata.getString(default))
     // Parse the DEFAULT column expression. If the parsing fails, throw an error to the user.
-    val colExprs: Seq[Expression] = colNames.zip(colTexts).map { Parse }
-    // First check for unresolved relation references or subquery outer references in 'colExprs'.
-    colExprs.zip(colNames).foreach {
-      case (expr, name) =>
-        if (expr.containsAnyPattern(UNRESOLVED_RELATION, OUTER_REFERENCE, UNRESOLVED_WITH)) {
-          throw new AnalysisException(
-            errorPrefix + s"$name has an DEFAULT value that is invalid because only simple " +
-              s"expressions are allowed: $expr")
-        }
+    val colExprs: Seq[Expression] = colNames.zip(colTexts).map {
+      case (name, text) => Parse(name, text)
     }
-    // Now invoke a simple analyzer to resolve any attribute references in each expression.
-    val analyzed = (colExprs, colTexts, colNames).zipped.map { Analyze }
+    // Analyze and constant-fold each result.
+    val analyzed = (colExprs, colTexts, colNames).zipped.map {
+      case (expr, text, name) => Analyze(expr, text, name)
+    }
     // Perform implicit coercion from the provided expression type to the required column type.
     val colExprsCoerced: Seq[Expression] = (analyzed, colTypes, colNames).zipped.map {
       case (expr, datatype, _)
