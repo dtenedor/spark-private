@@ -892,20 +892,23 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
     withTable("t") {
       assert(intercept[AnalysisException] {
         sql("create table t(i boolean, s bigint default (select min(x) from badtable)) " +
-            "using parquet")
-      }.getMessage.contains("invalid because only simple expressions are allowed"))
+          "using parquet")
+      }.getMessage.contains("DEFAULT value which fails to analyze"))
     }
+
     // The default value parses but refers to a table from the catalog.
     withTable("t", "other") {
       sql("create table other(x string) using parquet")
       assert(intercept[AnalysisException] {
         sql("create table t(i boolean, s bigint default (select min(x) from other)) using parquet")
-      }.getMessage.contains("invalid because only simple expressions are allowed"))
+      }.getMessage.contains("DEFAULT value which fails to analyze"))
     }
+
     // The default value parses but the type is not coercible.
     withTable("t") {
+      sql("create table t(i boolean, s bigint default \"abc\") using parquet")
       assert(intercept[AnalysisException] {
-        sql("create table t(i boolean, s bigint default \"abc\") using parquet")
+        sql("insert into t values (true, 42)")
       }.getMessage.contains("provided a value of incompatible type"))
     }
   }

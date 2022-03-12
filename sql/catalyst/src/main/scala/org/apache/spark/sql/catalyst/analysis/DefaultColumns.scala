@@ -24,7 +24,6 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, _}
 import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
 import org.apache.spark.sql.catalyst.parser.{CatalystSqlParser, ParseException}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.types._
 
@@ -103,9 +102,7 @@ case class DefaultColumns(catalogManager: CatalogManager) {
       // Make sure the constant folding was successful.
       result match {
         case _: Literal => result
-        case _ =>
-          throw new AnalysisException( errorPrefix +
-              s"$colName has a DEFAULT value which is not a constant expression: $colText")
+        case _ => throw new AnalysisException("non-constant value")
       }
     } catch {
       case ex: AnalysisException =>
