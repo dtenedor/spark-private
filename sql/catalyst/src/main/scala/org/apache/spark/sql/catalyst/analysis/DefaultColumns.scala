@@ -29,31 +29,32 @@ import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.types._
 
 /**
- * Finds DEFAULT expressions in CREATE/REPLACE TABLE commands and constant-folds then.
- *
- * Example:
- * CREATE TABLE T(a INT, b INT DEFAULT 5 + 5) becomes
- * CREATE TABLE T(a INT, b INT DEFAULT 10
+ * This class contains logic for processing DEFAULT columns in statements such as CREATE TABLE.
  */
-case class ConstantFoldDefaultExpressions(catalogManager: CatalogManager) {
+case class DefaultColumns(catalogManager: CatalogManager) {
   val default = "default"
+  val errorPrefix = "Failed to execute INSERT command because the destination table column "
+  val analysisPrefix = " has a DEFAULT value which fails to analyze: "
   lazy val parser = new CatalystSqlParser()
-  lazy val analyzer = new Analyzer(catalogManager)
+  lazy val analyzer =
+    new Analyzer(new SessionCatalog(new InMemoryCatalog, FunctionRegistry.builtin))
 
-  def apply(c: CreateTable): CreateTable = {
+  /**
+   * Finds DEFAULT expressions in CREATE/REPLACE TABLE commands and constant-folds then.
+   *
+   * Example:
+   * CREATE TABLE T(a INT, b INT DEFAULT 5 + 5) becomes
+   * CREATE TABLE T(a INT, b INT DEFAULT 10
+   */
+  def ConstantFoldDefaultExpressions(c: CreateTable): CreateTable = {
     // Get the list of column indexes in the CREATE TABLE command with DEFAULT values.
     val (fields: Array[StructField], indexes: Array[Int]) =
-      c.tableSchema.fields.zipWithIndex.filter {
-        case (f, i) => f.metadata.contains(default)
-      }.unzip
+      c.tableSchema.fields.zipWithIndex.filter { case (f, i) => f.metadata.contains(default) }.unzip
     // Extract the list of DEFAULT column values from the CreateTable command.
-    val defaults: Seq[String] = fields.map {
-      _.metadata.getString(default)
-    }
+    val colNames: Seq[String] = fields.map { _.name }
+    val defaults: Seq[String] = fields.map { _.metadata.getString(default) }
     // Extract the list of DEFAULT column values from the CreateTable command.
-    val exprs: Seq[Expression] = defaults.map {
-      parser.parseExpression(_)
-    }
+    val exprs: Seq[Expression] = colNames.zip(defaults).map { Parse }
     // Analyze and constant-fold each parse result.
     val analyzed: Seq[Expression] = exprs.map { e =>
       val plan = analyzer.execute(Project(Seq(Alias(e, "alias")()), OneRowRelation()))
@@ -70,28 +71,53 @@ case class ConstantFoldDefaultExpressions(catalogManager: CatalogManager) {
     }
     c.copy(tableSchema = StructType(newFields))
   }
-}
 
-/**
- * Replaces unresolved "DEFAULT" column references with matching default column values.
- *
- * Background: CREATE TABLE and ALTER TABLE invocations support setting column default values for
- * later operations. Following INSERT, and INSERT MERGE commands may then reference the value
- * using the DEFAULT keyword as needed.
- *
- * Example:
- * CREATE TABLE T(a INT, b INT NOT NULL DEFAULT 5);
- * INSERT INTO T VALUES (1, 2, DEFAULT);
- * SELECT * FROM T;
- * (NULL, 0, 5)
- * (NULL, 1, 5)
- * (1, 2, 5)
- */
-case class ResolveDefaultColumnReferences(catalogManager: CatalogManager) {
-  val default = "default"
-  lazy val parser = new CatalystSqlParser()
+  /**
+   * Parses 'colText' into an expression, returning a reasonable error message upon failure.
+   */
+  private def Parse(colName: String, colText: String): Expression = {
+    try {
+      parser.parseExpression(colText)
+    } catch {
+      case ex: ParseException =>
+        throw new AnalysisException(
+          errorPrefix + colName + analysisPrefix + s"$colText yields ${ex.getMessage}")
+    }
+  }
 
-  def apply(i: InsertIntoStatement): InsertIntoStatement = {
+  /**
+   * Analyzes 'colExpr', returning a reasonable error message upon failure.
+   */
+  private def Analyze(colExpr: Expression, colText: String, colName: String): Expression = {
+    try {
+      val analyzed = analyzer.execute(Project(Seq(Alias(colExpr, colName)()), OneRowRelation()))
+      analyzer.checkAnalysis(analyzed)
+      analyzed match {
+        case Project(Seq(a: Alias), OneRowRelation()) => a.child
+      }
+    } catch {
+      case ex: AnalysisException =>
+        throw new AnalysisException(
+          errorPrefix + colName + analysisPrefix + s"$colText yields ${ex.getMessage}")
+    }
+  }
+
+  /**
+   * Replaces unresolved "DEFAULT" column references with matching default column values.
+   *
+   * Background: CREATE TABLE and ALTER TABLE invocations support setting column default values for
+   * later operations. Following INSERT, and INSERT MERGE commands may then reference the value
+   * using the DEFAULT keyword as needed.
+   *
+   * Example:
+   * CREATE TABLE T(a INT, b INT NOT NULL DEFAULT 5);
+   * INSERT INTO T VALUES (1, 2, DEFAULT);
+   * SELECT * FROM T;
+   * (NULL, 0, 5)
+   * (NULL, 1, 5)
+   * (1, 2, 5)
+   */
+  def ResolveDefaultColumnReferences(i: InsertIntoStatement): InsertIntoStatement = {
     ReplaceExplicitDefaultColumnValues(AddProjectionForMissingDefaultColumnValues(i))
   }
 
@@ -110,18 +136,7 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager) {
     val colTypes: Seq[DataType] = columns.map(_.dataType)
     val colTexts: Seq[String] = columns.map(_.metadata.getString(default))
     // Parse the DEFAULT column expression. If the parsing fails, throw an error to the user.
-    val errorPrefix = "Failed to execute INSERT command because the destination table column "
-    val analysisPrefix = " has a DEFAULT value which fails to analyze: "
-    val colExprs: Seq[Expression] = colNames.zip(colTexts).map {
-      case (name, text) =>
-        try {
-          parser.parseExpression(text)
-        } catch {
-          case ex: ParseException =>
-            throw new AnalysisException(
-              errorPrefix + name + analysisPrefix + s"$text yields ${ex.getMessage}")
-        }
-    }
+    val colExprs: Seq[Expression] = colNames.zip(colTexts).map { Parse }
     // First check for unresolved relation references or subquery outer references in 'colExprs'.
     colExprs.zip(colNames).foreach {
       case (expr, name) =>
@@ -132,22 +147,7 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager) {
         }
     }
     // Now invoke a simple analyzer to resolve any attribute references in each expression.
-    val analyzed = (colExprs, colTexts, colNames).zipped.map {
-      case (expr, text, name) =>
-        try {
-          val analyzer = new Analyzer(
-            new SessionCatalog(new InMemoryCatalog, FunctionRegistry.builtin))
-          val analyzed = analyzer.execute(Project(Seq(Alias(expr, name)()), OneRowRelation()))
-          analyzer.checkAnalysis(analyzed)
-          analyzed match {
-            case Project(Seq(a: Alias), OneRowRelation()) => a.child
-          }
-        } catch {
-          case ex: AnalysisException =>
-            throw new AnalysisException(
-              errorPrefix + name + analysisPrefix + s"$text yields ${ex.getMessage}")
-        }
-    }
+    val analyzed = (colExprs, colTexts, colNames).zipped.map { Analyze }
     // Perform implicit coercion from the provided expression type to the required column type.
     val colExprsCoerced: Seq[Expression] = (analyzed, colTypes, colNames).zipped.map {
       case (expr, datatype, _)

@@ -375,7 +375,7 @@ case class PreprocessTableInsertion(catalogManager: CatalogManager) extends Rule
       tblName: String,
       partColNames: StructType,
       catalogTable: Option[CatalogTable]): InsertIntoStatement = {
-    val insert = ResolveDefaultColumnReferences(catalogManager)(originalInsert)
+    val insert = DefaultColumns(catalogManager).ResolveDefaultColumnReferences(originalInsert)
 
     val normalizedPartSpec = normalizePartitionSpec(
       insert.partitionSpec, partColNames, tblName, conf.resolver)

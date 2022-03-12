@@ -891,7 +891,8 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
     // The default value analyzes to a table not in the catalog.
     withTable("t") {
       assert(intercept[AnalysisException] {
-        sql("create table t(i boolean, s bigint default (select min(x) from badtable)) using parquet")
+        sql("create table t(i boolean, s bigint default (select min(x) from badtable)) " +
+            "using parquet")
       }.getMessage.contains("invalid because only simple expressions are allowed"))
     }
     // The default value parses but refers to a table from the catalog.
