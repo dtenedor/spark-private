@@ -18,7 +18,6 @@
 package org.apache.spark.sql.catalyst.analysis
 
 import java.lang.reflect.{Method, Modifier}
-
 import java.util
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -36,9 +35,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, FrameLessOffsetWin
 import org.apache.spark.sql.catalyst.expressions.SubExprUtils._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.expressions.objects._
-import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
 import org.apache.spark.sql.catalyst.optimizer.OptimizeUpdateFields
-import org.apache.spark.sql.catalyst.parser.{CatalystSqlParser, ParseException}
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules._

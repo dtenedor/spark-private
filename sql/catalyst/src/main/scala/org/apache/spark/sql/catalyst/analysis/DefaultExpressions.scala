@@ -17,51 +17,18 @@
 
 package org.apache.spark.sql.catalyst.analysis
 
-import java.lang.reflect.{Method, Modifier}
-
-import java.util
-import java.util.Locale
-import java.util.concurrent.atomic.AtomicBoolean
-
-import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
-import scala.util.{Failure, Random, Success, Try}
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst._
-import org.apache.spark.sql.catalyst.analysis.SimpleAnalyzer.{extraHintForAnsiTypeCoercionExpression, DATA_TYPE_MISMATCH_ERROR}
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.encoders.OuterScopes
-import org.apache.spark.sql.catalyst.expressions.{Expression, FrameLessOffsetWindowFunction, _}
-import org.apache.spark.sql.catalyst.expressions.SubExprUtils._
-import org.apache.spark.sql.catalyst.expressions.aggregate._
-import org.apache.spark.sql.catalyst.expressions.objects._
+import org.apache.spark.sql.catalyst.expressions.{Expression, _}
 import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
-import org.apache.spark.sql.catalyst.optimizer.OptimizeUpdateFields
 import org.apache.spark.sql.catalyst.parser.{CatalystSqlParser, ParseException}
-import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules._
-import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
-import org.apache.spark.sql.catalyst.trees.{AlwaysProcess, CurrentOrigin}
 import org.apache.spark.sql.catalyst.trees.TreePattern._
-import org.apache.spark.sql.catalyst.util.{toPrettySQL, CharVarcharUtils}
 import org.apache.spark.sql.connector.catalog._
-import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition}
-import org.apache.spark.sql.connector.catalog.functions.{AggregateFunction => V2AggregateFunction, BoundFunction, ScalarFunction, UnboundFunction}
-import org.apache.spark.sql.connector.catalog.functions.ScalarFunction.MAGIC_METHOD_NAME
-import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
-import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.{PartitionOverwriteMode, StoreAssignmentPolicy}
-import org.apache.spark.sql.internal.connector.V1Function
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.types.DayTimeIntervalType.DAY
-import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
-import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.util.Utils
 
 /**
  * Finds DEFAULT expressions in CREATE/REPLACE TABLE commands and constant-folds then.
@@ -207,27 +174,32 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager)
   }
 
   /**
-   * Replaces unresolved "DEFAULT" attributes references in [[insert]] with corresponding values.
+   * Replaces unresolved "DEFAULT" attribute references in [[insert]] with corresponding values.
    */
   private def ReplaceExplicitDefaultColumnValues(
       insert: InsertIntoStatement): InsertIntoStatement = {
+    // Extract the list of DEFAULT column values from the INSERT INTO statement.
     val defaults: Seq[Option[Expression]] = insert.table.schema.fields.map {
       case f if f.metadata.contains(default) =>
         Some(parser.parseExpression(f.metadata.getString(default)))
       case _ => None
     }
+    // Handle two types of logical query plans in the target of the INSERT INTO statement:
+    // Inline table: VALUES (0, 1, DEFAULT, ...)
+    // Projection: SELECT 0, 1, DEFAULT, ...
     val newQuery: LogicalPlan = insert.query match {
-      case table: UnresolvedInlineTable if table.rows.length == 1 =>
-        val row: Seq[Expression] = table.rows.head
-        val updated: Seq[Expression] = defaults.zip(row).map {
-          case (default, expr) =>
-            if (default.isDefined) {
-              ReplaceDefaultReferencesInExpression(default.get)(expr)
-            } else {
-              expr
-            }
+      case table: UnresolvedInlineTable =>
+        val rows: Seq[Seq[Expression]] = table.rows.map { row =>
+          defaults.zip(row).map {
+            case (default, rowExpr) =>
+              if (default.isDefined) {
+                ReplaceDefaultReferencesInExpression(default.get)(rowExpr)
+              } else {
+                rowExpr
+              }
+          }
         }
-        table.copy(rows = Seq(updated))
+        table.copy(rows = rows)
       case project: Project =>
         val updated: Seq[NamedExpression] = project.projectList.map {
           ReplaceDefaultReferencesInExpression(_).asInstanceOf[NamedExpression]
@@ -244,8 +216,7 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager)
 case class ReplaceDefaultReferencesInExpression(result: Expression) extends Rule[Expression] {
   def apply(expr: Expression): Expression =
     expr.transformWithPruning(_.containsPattern(UNRESOLVED_ATTRIBUTE)) {
-      case u: UnresolvedAttribute if u.name.equalsIgnoreCase(default) => result
+      case u: UnresolvedAttribute if u.name.equalsIgnoreCase("default") => result
       case e: Expression => e
     }
 }
-
