@@ -27,6 +27,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.PartitionOverwriteMode
@@ -872,34 +873,39 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
       sql("create table t(i boolean, s bigint default 42, x bigint default 43) using parquet")
       sql("insert into t values(false)")
       sql("insert into t values(false, 44)")
-      checkAnswer(sql("select s, x from t"), Seq(Row(42L, 43L), Row(44L, 43L)).map(i => Row(i)))
+      val resultSchema = new StructType()
+        .add("s", LongType, false)
+        .add("x", LongType, false)
+      checkAnswer(sql("select s, x from t"),
+        Seq(new GenericRowWithSchema(Array(42L, 43L), resultSchema),
+            new GenericRowWithSchema(Array(44L, 43L), resultSchema)))
     }
 
     // Negative tests:
-    // The default value fails to parse.
+    // The default value fails to analyze.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default unparseable) using parquet")
-      sql("insert into t values(false)")
-      checkAnswer(sql("select s from t where i = false"), Seq(42L).map(i => Row(i)))
+      sql("create table t(i boolean, s bigint default badvalue) using parquet")
+      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
+        .getMessage.contains("DEFAULT value which fails to analyze"))
+    }
+    // The default value analyzes to a table not in the catalog.
+    withTable("t") {
+      sql("create table t(i boolean, s bigint default (select min(x) from badtable)) using parquet")
+      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
+        .getMessage.contains("invalid because only simple expressions are allowed"))
     }
     // The default value parses but refers to a table from the catalog.
     withTable("t", "other") {
       sql("create table other(x string) using parquet")
       sql("create table t(i boolean, s bigint default (select min(x) from other)) using parquet")
-      sql("insert into t values(false)")
-      checkAnswer(sql("select s from t where i = false"), Seq("abc").map(i => Row(i)))
+      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
+        .getMessage.contains("invalid because only simple expressions are allowed"))
     }
     // The default value parses but the type is not coercible.
     withTable("t") {
       sql("create table t(i boolean, s bigint default \"abc\") using parquet")
-      sql("insert into t values(false)")
-      checkAnswer(sql("select s from t where i = false"), Seq("abc").map(i => Row(i)))
-    }
-    // The default value parses but analysis is not successful.
-    withTable("t") {
-      sql("create table t(i boolean, s bigint default (select min(x) from badtable) using parquet")
-      sql("insert into t values(false)")
-      checkAnswer(sql("select s from t where i = false"), Seq("abc").map(i => Row(i)))
+      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
+        .getMessage.contains("provided a value of incompatible type"))
     }
   }
 

@@ -27,6 +27,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern._
+import org.apache.spark.sql.connector.catalog.CatalogV2Util
 import org.apache.spark.sql.connector.expressions.{FieldReference, RewritableTransform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.DDLUtils
@@ -370,7 +371,7 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
  * table. It also does data type casting and field renaming, to make sure that the columns to be
  * inserted have the correct data type and fields have the correct names.
  */
-case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[LogicalPlan] {
+object PreprocessTableInsertion extends Rule[LogicalPlan] {
   private def preprocess(
       insert: InsertIntoStatement,
       tblName: String,
@@ -383,10 +384,7 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
     val staticPartCols = normalizedPartSpec.filter(_._2.isDefined).keySet
     val expectedColumns = insert.table.output.filterNot(a => staticPartCols.contains(a.name))
 
-    val missingProvidedColIndexes = insert.query.output.size until insert.table.output.size
-    val numMissingProvidedColsWithDefaults = missingProvidedColIndexes.filter(
-      insert.table.schema.fields(_).metadata.contains("default")).length
-    if (expectedColumns.length > insert.query.schema.length + numMissingProvidedColsWithDefaults) {
+    if (expectedColumns.length != insert.query.schema.length) {
       throw QueryCompilationErrors.mismatchedInsertedDataColumnNumberError(
         tblName, insert, staticPartCols)
     }
@@ -402,98 +400,20 @@ case class PreprocessTableInsertion(sparkSession: SparkSession) extends Rule[Log
           s"The spec ($spec) contains an empty partition column value")
       }
     }
-    // Add default column values to the INSERT statement if not explicitly provided, and if the
-    // table schema specifies this metadata.
-    val insertQuery = {
-      if (numMissingProvidedColsWithDefaults == 0) {
-        insert.query
-      } else {
-        AddProjectionForDefaultColumnValues(insert)
-      }
-    }
-    val resolvedQuery: LogicalPlan = TableOutputResolver.resolveOutputColumns(
-      tblName, expectedColumns, insertQuery, byName = false, conf)
+
+    val newQuery = TableOutputResolver.resolveOutputColumns(
+      tblName, expectedColumns, insert.query, byName = false, conf)
     if (normalizedPartSpec.nonEmpty) {
       if (normalizedPartSpec.size != partColNames.length) {
         throw QueryCompilationErrors.requestedPartitionsMismatchTablePartitionsError(
           tblName, normalizedPartSpec, partColNames)
       }
-      insert.copy(query = resolvedQuery, partitionSpec = normalizedPartSpec)
+
+      insert.copy(query = newQuery, partitionSpec = normalizedPartSpec)
     } else {
       // All partition columns are dynamic because the InsertIntoTable command does
       // not explicitly specify partitioning columns.
-      insert.copy(query = resolvedQuery,
-        partitionSpec = partColNames.map(_.name).map(_ -> None).toMap)
-    }
-  }
-
-  /**
-   * Adds a projection over the logical plan in 'insert.query' generating default column values.
-   */
-  private def AddProjectionForDefaultColumnValues(insert: InsertIntoStatement): LogicalPlan = {
-    val colIndexes = insert.query.output.size until insert.table.output.size
-    val columns = colIndexes.map(insert.table.schema.fields(_))
-    val colNames: Seq[String] = columns.map(_.name)
-    val colTypes: Seq[DataType] = columns.map(_.dataType)
-    val colTexts: Seq[String] = columns.map(_.metadata.getString("default"))
-    // Parse the DEFAULT column expression. If the parsing fails, throw an error to the user.
-    val errorPrefix = "Failed to execute INSERT command because the destination table column "
-    val colExprs: Seq[Expression] = colNames.zip(colTexts).map {
-      case (colName, colText) =>
-        try {
-          sparkSession.sessionState.sqlParser.parseExpression(colText)
-        } catch {
-          case ex: ParseException =>
-            throw new AnalysisException(
-              errorPrefix + s"$colName has a DEFAULT value which fails to parse: " +
-                s"$colText yields ${ex.getMessage}")
-        }
-    }
-    // First check for unresolved relation references or subquery outer references in 'colExprs'.
-    colExprs.zip(colNames).foreach { pair =>
-      if (pair._1.containsAnyPattern(UNRESOLVED_RELATION, OUTER_REFERENCE, UNRESOLVED_WITH)) {
-        throw new AnalysisException(
-          errorPrefix + s"${pair._1} has an DEFAULT value that is invalid because only simple " +
-            s"expressions are allowed: ${pair._2}")
-      }
-    }
-    // Perform implicit coercion from the provided expression type to required DEFAULT column type.
-    val colExprsCoerced: Seq[Expression] = (colExprs, colTypes, colNames).zipped.map {
-      case (colExpr, colType, _)
-        if colType != colExpr.dataType && Cast.canUpCast(colExpr.dataType, colType) =>
-        Cast(colExpr, colType)
-      case (colExpr, colType, colName)
-        if colType != colExpr.dataType =>
-        throw new AnalysisException(
-          errorPrefix + s"$colName has a DEFAULT value with type $colType, but the query " +
-            s"provided a value of incompatible type ${colExpr.dataType}")
-      case (colExpr, _, _) => colExpr
-    }
-    // Now invoke a simple analyzer to resolve any attribute references in each expression and add
-    // an alias over each one.
-    val newAliases = (colExprsCoerced, colTexts, colNames).zipped.map {
-      case (colExpr, colText, colName) =>
-        try {
-          val analyzer = new Analyzer(
-            new SessionCatalog(new InMemoryCatalog, FunctionRegistry.builtin))
-          val analyzed = analyzer.execute(Project(Seq(Alias(colExpr, colName)()), OneRowRelation()))
-          analyzer.checkAnalysis(analyzed)
-          analyzed match {
-            case Project(Seq(a@_), OneRowRelation()) => a.asInstanceOf[Alias]
-          }
-        } catch {
-          case ex: AnalysisException =>
-            throw new AnalysisException(
-              errorPrefix + s"$colName has a DEFAULT value which fails to analyze: " +
-                s"$colText yields ${ex.getMessage}")
-        }
-    }
-    // Finally, return a projection of the original 'insert.query' output attributes plus the new
-    // aliases over the DEFAULT column values we generated.
-    // If the insertQuery is an existing Project, flatten them together.
-    insert.query match {
-      case Project(projectList, child) => Project(projectList ++ newAliases, child)
-      case _ => Project(insert.query.output ++ newAliases, insert.query)
+      insert.copy(query = newQuery, partitionSpec = partColNames.map(_.name).map(_ -> None).toMap)
     }
   }
 
