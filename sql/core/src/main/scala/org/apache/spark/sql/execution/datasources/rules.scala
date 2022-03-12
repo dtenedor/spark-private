@@ -25,6 +25,7 @@ import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.expressions.{Expression, InputFileBlockLength, InputFileBlockStart, InputFileName, RowOrdering}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.connector.expressions.{FieldReference, RewritableTransform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.DDLUtils
@@ -368,12 +369,13 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
  * table. It also does data type casting and field renaming, to make sure that the columns to be
  * inserted have the correct data type and fields have the correct names.
  */
-object PreprocessTableInsertion extends Rule[LogicalPlan] {
+case class PreprocessTableInsertion(catalogManager: CatalogManager) extends Rule[LogicalPlan] {
   private def preprocess(
-      insert: InsertIntoStatement,
+      originalInsert: InsertIntoStatement,
       tblName: String,
       partColNames: StructType,
       catalogTable: Option[CatalogTable]): InsertIntoStatement = {
+    val insert = ResolveDefaultColumnReferences(catalogManager)()
 
     val normalizedPartSpec = normalizePartitionSpec(
       insert.partitionSpec, partColNames, tblName, conf.resolver)

@@ -1218,11 +1218,8 @@ class Analyzer(override val catalogManager: CatalogManager)
   object ResolveInsertInto extends Rule[LogicalPlan] {
     override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsWithPruning(
       AlwaysProcess.fn, ruleId) {
-      case originalInsert @ InsertIntoStatement(r: DataSourceV2Relation, _, _, _, _, _)
-          if originalInsert.query.resolved && originalInsert.userSpecifiedCols.isEmpty =>
-        // Resolve DEFAULT column references in the INSERT INTO statement.
-        val i = ResolveDefaultColumnReferences(catalogManager)(originalInsert)
-
+      case i @ InsertIntoStatement(r: DataSourceV2Relation, _, _, _, _, _)
+          if i.query.resolved && i.userSpecifiedCols.isEmpty =>
         // ifPartitionNotExists is append with validation, but validation is not supported
         if (i.ifPartitionNotExists) {
           throw QueryCompilationErrors.unsupportedIfNotExistsError(r.table.name)
