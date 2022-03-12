@@ -906,9 +906,9 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
 
     // The default value parses but the type is not coercible.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default \"abc\") using parquet")
+      sql("create table t(i boolean, s bigint default 42) using parquet")
       assert(intercept[AnalysisException] {
-        sql("insert into t values (true, 42)")
+        sql("insert into t values (true, false)")
       }.getMessage.contains("provided a value of incompatible type"))
     }
   }
