@@ -884,28 +884,28 @@ class InsertSuite extends DataSourceTest with SharedSparkSession {
     // Negative tests:
     // The default value fails to analyze.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default badvalue) using parquet")
-      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
-        .getMessage.contains("DEFAULT value which fails to analyze"))
+      assert(intercept[AnalysisException] {
+        sql("create table t(i boolean, s bigint default badvalue) using parquet")
+      }.getMessage.contains("DEFAULT value which fails to analyze"))
     }
     // The default value analyzes to a table not in the catalog.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default (select min(x) from badtable)) using parquet")
-      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
-        .getMessage.contains("invalid because only simple expressions are allowed"))
+      assert(intercept[AnalysisException] {
+        sql("create table t(i boolean, s bigint default (select min(x) from badtable)) using parquet")
+      }.getMessage.contains("invalid because only simple expressions are allowed"))
     }
     // The default value parses but refers to a table from the catalog.
     withTable("t", "other") {
       sql("create table other(x string) using parquet")
-      sql("create table t(i boolean, s bigint default (select min(x) from other)) using parquet")
-      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
-        .getMessage.contains("invalid because only simple expressions are allowed"))
+      assert(intercept[AnalysisException] {
+        sql("create table t(i boolean, s bigint default (select min(x) from other)) using parquet")
+      }.getMessage.contains("invalid because only simple expressions are allowed"))
     }
     // The default value parses but the type is not coercible.
     withTable("t") {
-      sql("create table t(i boolean, s bigint default \"abc\") using parquet")
-      assert(intercept[AnalysisException] { sql("insert into t values(false)") }
-        .getMessage.contains("provided a value of incompatible type"))
+      assert(intercept[AnalysisException] {
+        sql("create table t(i boolean, s bigint default \"abc\") using parquet")
+      }.getMessage.contains("provided a value of incompatible type"))
     }
   }
 

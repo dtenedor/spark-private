@@ -18,6 +18,7 @@
 package org.apache.spark.sql.catalyst.analysis
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.expressions.{Expression, _}
 import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
@@ -100,6 +101,10 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager) {
   private def AddProjectionForMissingDefaultColumnValues(
       insert: InsertIntoStatement): InsertIntoStatement = {
     val colIndexes = insert.query.output.size until insert.table.output.size
+    if (colIndexes.isEmpty) {
+      // Fast path: if there are no missing default columns, there is nothing to do.
+      return insert
+    }
     val columns = colIndexes.map(insert.table.schema.fields(_))
     val colNames: Seq[String] = columns.map(_.name)
     val colTypes: Seq[DataType] = columns.map(_.dataType)
@@ -179,29 +184,33 @@ case class ResolveDefaultColumnReferences(catalogManager: CatalogManager) {
         Some(parser.parseExpression(f.metadata.getString(default)))
       case _ => None
     }
+    if (defaults.isEmpty) {
+      // Fast path: if there are no explicit default columns, there is nothing to do.
+      return insert
+    }
     // Handle two types of logical query plans in the target of the INSERT INTO statement:
     // Inline table: VALUES (0, 1, DEFAULT, ...)
     // Projection: SELECT 0, 1, DEFAULT, ...
     val newQuery: LogicalPlan = insert.query match {
-      case table: UnresolvedInlineTable =>
-        val rows: Seq[Seq[Expression]] = table.rows.map { row =>
-          defaults.zip(row).map {
-            case (defaultExpr, rowExpr) =>
-              if (defaultExpr.isDefined) {
-                rowExpr match {
-                  case u: UnresolvedAttribute if u.name.equalsIgnoreCase(default) => u
-                  case _ => rowExpr
-                }
-              } else {
-                rowExpr
+      case table: LocalRelation =>
+        val data: Seq[InternalRow] = table.data.map { data =>
+          val rowCopy = data.copy()
+          (defaults, data.toSeq(table.schema), 0 until defaults.size).zipped.map {
+            case (defaultExpr: Option[Expression], value: Any, index: Int) =>
+              value match {
+                case u: UnresolvedAttribute
+                  if u.name.equalsIgnoreCase(default) && defaultExpr.isDefined =>
+                  rowCopy.update(index, defaultExpr.get.eval())
+                case _ => ()
               }
           }
+          rowCopy
         }
-        table.copy(rows = rows)
+        table.copy(data = data)
       case project: Project =>
         val updated: Seq[NamedExpression] = project.projectList.map {
           expr => expr match {
-            case u: UnresolvedAttribute if u.name.equalsIgnoreCase(default) => u
+            case u: UnresolvedAttribute if u.name.equalsIgnoreCase(default) => expr
             case _ => expr
           }
         }
