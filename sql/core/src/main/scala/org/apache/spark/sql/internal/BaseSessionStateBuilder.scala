@@ -192,7 +192,7 @@ abstract class BaseSessionStateBuilder(
     override val postHocResolutionRules: Seq[Rule[LogicalPlan]] =
       DetectAmbiguousSelfJoin +:
         PreprocessTableCreation(session) +:
-        PreprocessTableInsertion(catalogManager) +:
+        PreprocessTableInsertion +:
         DataSourceAnalysis +:
         ReplaceCharWithVarchar +:
         customPostHocResolutionRules

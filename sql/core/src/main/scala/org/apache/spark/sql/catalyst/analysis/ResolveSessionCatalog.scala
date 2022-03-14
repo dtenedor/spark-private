@@ -157,7 +157,7 @@ class ResolveSessionCatalog(val catalogManager: CatalogManager)
       } else {
         c
       }
-      DefaultColumns(catalogManager).ConstantFoldDefaultExpressions(c)
+      DefaultColumns.ConstantFoldDefaultExpressions(c)
 
     case c @ CreateTableAsSelect(ResolvedDBObjectName(catalog, name), _, _, _, _, _)
         if isSessionCatalog(catalog) =>

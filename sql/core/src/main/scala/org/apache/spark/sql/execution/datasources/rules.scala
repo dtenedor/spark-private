@@ -369,13 +369,13 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
  * table. It also does data type casting and field renaming, to make sure that the columns to be
  * inserted have the correct data type and fields have the correct names.
  */
-case class PreprocessTableInsertion(catalogManager: CatalogManager) extends Rule[LogicalPlan] {
+object PreprocessTableInsertion extends Rule[LogicalPlan] {
   private def preprocess(
       originalInsert: InsertIntoStatement,
       tblName: String,
       partColNames: StructType,
       catalogTable: Option[CatalogTable]): InsertIntoStatement = {
-    val insert = DefaultColumns(catalogManager).ResolveDefaultColumnReferences(originalInsert)
+    val insert = DefaultColumns.ResolveDefaultColumnReferences(originalInsert)
 
     val normalizedPartSpec = normalizePartitionSpec(
       insert.partitionSpec, partColNames, tblName, conf.resolver)

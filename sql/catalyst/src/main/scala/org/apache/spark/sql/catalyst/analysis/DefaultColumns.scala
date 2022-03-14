@@ -30,7 +30,7 @@ import org.apache.spark.sql.types._
 /**
  * This class contains logic for processing DEFAULT columns in statements such as CREATE TABLE.
  */
-case class DefaultColumns(catalogManager: CatalogManager) {
+object DefaultColumns {
   val default = "default"
   val errorPrefix = "Failed to execute INSERT command because the destination table column "
   val analysisPrefix = " has a DEFAULT value which fails to analyze: "
