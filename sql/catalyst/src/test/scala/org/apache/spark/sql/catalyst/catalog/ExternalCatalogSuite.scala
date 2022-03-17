@@ -1010,24 +1010,6 @@ abstract class CatalogTestUtils {
     catalog
   }
 
-  /**
-   * Creates a basic catalog like newBasicCatalog, except the tables have default columns.
-   */
-  def newBasicCatalogWithDefaultColumn(): ExternalCatalog = {
-    val catalog = newEmptyCatalog()
-    // When testing against a real catalog, the default database may already exist
-    catalog.createDatabase(newDb("default"), ignoreIfExists = true)
-    catalog.createDatabase(newDb("db1"), ignoreIfExists = false)
-    catalog.createDatabase(newDb("db2"), ignoreIfExists = false)
-    catalog.createDatabase(newDb("db3"), ignoreIfExists = false)
-    catalog.createTable(newTableWithDefaultColumn("tbl1", Some("db2")), ignoreIfExists = false)
-    catalog.createTable(newTableWithDefaultColumn("tbl2", Some("db2")), ignoreIfExists = false)
-    catalog.createPartitions("db2", "tbl2", Seq(part1, part2), ignoreIfExists = false)
-    catalog.createFunction("db2", newFunc("func1", Some("db2")))
-    catalog
-
-  }
-
   def newFunc(): CatalogFunction = newFunc("funcName")
 
   def newUriForDatabase(): URI = new URI(Utils.createTempDir().toURI.toString.stripSuffix("/"))

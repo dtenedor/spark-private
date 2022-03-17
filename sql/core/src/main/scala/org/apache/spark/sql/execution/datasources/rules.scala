@@ -371,11 +371,10 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
  */
 object PreprocessTableInsertion extends Rule[LogicalPlan] {
   private def preprocess(
-      originalInsert: InsertIntoStatement,
+      insert: InsertIntoStatement,
       tblName: String,
       partColNames: StructType,
       catalogTable: Option[CatalogTable]): InsertIntoStatement = {
-    val insert = DefaultColumns.ResolveDefaultColumnReferences(originalInsert)
 
     val normalizedPartSpec = normalizePartitionSpec(
       insert.partitionSpec, partColNames, tblName, conf.resolver)
