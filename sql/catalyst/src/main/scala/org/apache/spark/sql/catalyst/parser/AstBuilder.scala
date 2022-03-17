@@ -2784,10 +2784,15 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
     Option(commentSpec()).map(visitCommentSpec).foreach {
       builder.putString("comment", _)
     }
-    // Process the 'DEFAULT expression' clause in the column definition, if any.
-    val defaultExpr = Option(ctx.defaultExpression()).map(visitDefaultExpression).foreach {
-      // Add default to metadata
-      builder.putString("default", _)
+    // Add the 'DEFAULT expression' clause in the column definition, if any, to the column metadata.
+    Option(ctx.defaultExpression()).map(visitDefaultExpression).foreach { field =>
+      if (conf.getConf(SQLConf.ENABLE_DEFAULT_COLUMNS)) {
+        // Add default to metadata
+        builder.putString(DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY, field)
+        builder.putString(DefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY, field)
+      } else {
+        throw QueryParsingErrors.defaultColumnNotEnabledError(ctx)
+      }
     }
 
     val name: String = colName.getText

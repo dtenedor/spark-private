@@ -65,15 +65,6 @@ abstract class SessionCatalogSuite extends AnalysisTest with Eventually {
     }
   }
 
-  private def withBasicCatalogWithDefaultColumn(f: SessionCatalog => Unit): Unit = {
-    val catalog = new SessionCatalog(newBasicCatalogWithDefaultColumn())
-    try {
-      f(catalog)
-    } finally {
-      catalog.reset()
-    }
-  }
-
   private def withEmptyCatalog(f: SessionCatalog => Unit): Unit = {
     val catalog = new SessionCatalog(newEmptyCatalog())
     catalog.createDatabase(newDb("default"), ignoreIfExists = true)
@@ -279,20 +270,26 @@ abstract class SessionCatalogSuite extends AnalysisTest with Eventually {
   }
 
   test("create table with default columns") {
-    withBasicCatalogWithDefaultColumn { catalog =>
+    withBasicCatalog { catalog =>
       assert(catalog.externalCatalog.listTables("db1").isEmpty)
       assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2"))
-      catalog.createTable(newTableWithDefaultColumn("tbl3", Some("db1")), ignoreIfExists = false)
-      catalog.createTable(newTableWithDefaultColumn("tbl3", Some("db2")), ignoreIfExists = false)
+      catalog.createTable(newTable(
+        "tbl3", Some("db1"), defaultColumns = true), ignoreIfExists = false)
+      catalog.createTable(newTable(
+        "tbl3", Some("db2"), defaultColumns = true), ignoreIfExists = false)
       assert(catalog.externalCatalog.listTables("db1").toSet == Set("tbl3"))
       assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2", "tbl3"))
-      assert(catalog.externalCatalog.getTable("db2", "tbl3")
-        .schema.fields.last.metadata.getString("default") == "\"abc\"")
-      // Create table without explicitly specifying database
-      catalog.setCurrentDatabase("db1")
-      catalog.createTable(newTable("tbl4"), ignoreIfExists = false)
-      assert(catalog.externalCatalog.listTables("db1").toSet == Set("tbl3", "tbl4"))
-      assert(catalog.externalCatalog.listTables("db2").toSet == Set("tbl1", "tbl2", "tbl3"))
+      // Inspect the default column values.
+      val db1tbl3 = catalog.externalCatalog.getTable("db1", "tbl3")
+      val db2tbl3 = catalog.externalCatalog.getTable("db2", "tbl3")
+      assert(db1tbl3.schema.fields(db1tbl3.schema.fields.size - 2)
+        .metadata.getString(DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) == "42")
+      assert(db1tbl3.schema.fields.last
+        .metadata.getString(DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) == "\"abc\"")
+      assert(db2tbl3.schema.fields(db2tbl3.schema.fields.size - 2)
+        .metadata.getString(DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) == "42")
+      assert(db2tbl3.schema.fields.last
+        .metadata.getString(DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) == "\"abc\"")
     }
   }
 

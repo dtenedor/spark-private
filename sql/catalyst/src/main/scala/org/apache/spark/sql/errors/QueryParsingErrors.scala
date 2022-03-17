@@ -436,4 +436,8 @@ object QueryParsingErrors {
     new ParseException(
       s"DROP TEMPORARY FUNCTION requires a single part name but got: ${name.quoted}", ctx)
   }
+
+  def defaultColumnNotEnabledError(ctx: ParserRuleContext): Throwable = {
+    new ParseException("Support for DEFAULT column values is not allowed", ctx)
+  }
 }

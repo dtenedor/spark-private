@@ -27,7 +27,7 @@ import org.scalatest.BeforeAndAfterEach
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.{FunctionAlreadyExistsException, NoSuchDatabaseException, NoSuchFunctionException}
+import org.apache.spark.sql.catalyst.analysis.{DefaultColumns, FunctionAlreadyExistsException, NoSuchDatabaseException, NoSuchFunctionException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions._
@@ -1025,6 +1025,7 @@ abstract class CatalogTestUtils {
     catalog.createPartitions("db2", "tbl2", Seq(part1, part2), ignoreIfExists = false)
     catalog.createFunction("db2", newFunc("func1", Some("db2")))
     catalog
+
   }
 
   def newFunc(): CatalogFunction = newFunc("funcName")
@@ -1042,31 +1043,29 @@ abstract class CatalogTestUtils {
 
   def newTable(name: String, db: String): CatalogTable = newTable(name, Some(db))
 
-  def newTable(name: String, database: Option[String] = None): CatalogTable = {
+  def newTable(name: String, database: Option[String] = None,
+      defaultColumns: Boolean = false): CatalogTable = {
     CatalogTable(
       identifier = TableIdentifier(name, database),
       tableType = CatalogTableType.EXTERNAL,
       storage = storageFormat.copy(locationUri = Some(Utils.createTempDir().toURI)),
-      schema = new StructType()
-        .add("col1", "int")
-        .add("col2", "string")
-        .add("a", "int")
-        .add("b", "string"),
-      provider = Some(defaultProvider),
-      partitionColumnNames = Seq("a", "b"),
-      bucketSpec = Some(BucketSpec(4, Seq("col1"), Nil)))
-  }
-
-  def newTableWithDefaultColumn(name: String, database: Option[String] = None): CatalogTable = {
-    CatalogTable(
-      identifier = TableIdentifier(name, database),
-      tableType = CatalogTableType.EXTERNAL,
-      storage = storageFormat.copy(locationUri = Some(Utils.createTempDir().toURI)),
-      schema = new StructType()
-        .add("a", IntegerType, nullable = true,
-          new MetadataBuilder().putString("comment", "test").build())
-        .add("b", StringType, nullable = false,
-          new MetadataBuilder().putString("default", "\"abc\"").build()),
+      schema = if (defaultColumns) {
+        new StructType()
+          .add("col1", "int")
+          .add("col2", "string")
+          .add("a", IntegerType, nullable = true,
+            new MetadataBuilder().putString(
+              DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY, "42").build())
+          .add("b", StringType, nullable = false,
+            new MetadataBuilder().putString(
+              DefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY, "\"abc\"").build())
+      } else {
+        new StructType()
+          .add("col1", "int")
+          .add("col2", "string")
+          .add("a", "int")
+          .add("b", "string")
+      },
       provider = Some(defaultProvider),
       partitionColumnNames = Seq("a", "b"),
       bucketSpec = Some(BucketSpec(4, Seq("col1"), Nil)))
